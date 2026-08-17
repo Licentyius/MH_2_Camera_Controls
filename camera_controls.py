@@ -1,10 +1,22 @@
 """
     License information: data/licenses/makehuman_license.txt
     Author: Elvaerwyn_MH2 Makehuman 2 2026
-    Camera Controls V2.5 - Formerly Zoom Patch- Cinematic Composition & Camera Presets
+    Camera Controls V2.5 - Formerly Zoom Patch- Cinematic Filters & Camera Presets Plus Box/marqee zoom
 """
-from PySide6.QtCore import Qt, QPoint, QObject, QEvent, QRect
-from PySide6.QtWidgets import QApplication, QRubberBand, QWidget, QVBoxLayout, QPushButton, QGridLayout, QLabel
+from PySide6.QtCore import Qt, QPoint, QObject, QEvent, QRect, QSize
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                             QGridLayout, QPushButton, QLabel, QRubberBand, QComboBox, QDockWidget)
+
+_active_filter_instance = None
+_ui_panel_instance = None
+_filter_overlay_label = None  
+_saved_app_context = None
+_saved_glob_context = None
+
+import sys
+import os
+import math
+
 from math import pi as M_PI
 
 
@@ -73,10 +85,10 @@ def trigger_cinematic_preset(camera, preset_name):
     camera.lookAt.setX(0.0)
     camera.lookAt.setZ(0.0)
 
-    # =========================================================================
+    # ===================================================================
     # DECIMETER ANATOMICAL TARGET HEIGHTS (1 unit = 10cm)
     # Based on an average character height of 17.0 decimeters (~1.7m)
-    # =========================================================================
+    # ===================================================================
     head_height = 16.2    # Target eyes/face center line precisely
     chest_height = 13.5   # Target center line for upper body framing
     mid_height = 8.5      # Target exact mid-torso center balance point
@@ -87,9 +99,9 @@ def trigger_cinematic_preset(camera, preset_name):
     target_dist = 32.0    # Balanced default tracking baseline (~3.2 meters)
     target_fov = 45.0
 
-    # =========================================================================
-    # DETAILED CINEMATIC PRESET VALUE ASSIGNMENTS
-    # =========================================================================
+    # ============================
+    # DETAILED CINEMATIC PRESETS
+    # ============================
     if name == "selfie_left":
         camera.lookAt.setY(5.8)
         target_fov = 55.0
@@ -123,7 +135,6 @@ def trigger_cinematic_preset(camera, preset_name):
         target_dist = 4.6              
         target_rh = 0.0
         target_rv = 0.0
-
 
     elif name in ["godview", "birdview"]:
         # Look directly down at the middle core mass height
@@ -168,7 +179,7 @@ def trigger_cinematic_preset(camera, preset_name):
         
         target_dist = 45.0        
         target_rh = 45.0      
-        # Precise mathematical isometric downward lens pitch tilt
+        # mathematical isometric lens pitch tilt
         target_rv = -35.264   
 
     elif name == "wideshot":
@@ -251,11 +262,13 @@ def trigger_cinematic_preset(camera, preset_name):
     # CLEAN CORE SYNC PIPELINE 
     # =========================
     # Assign parameters natively so MakeHuman's input math remains active
-    camera.verticalAngle = target_fov
-    camera.cameraDist = target_dist
+    if 'target_fov' in locals(): camera.verticalAngle = target_fov
+    if 'target_dist' in locals(): camera.cameraDist = target_dist
     
-    if hasattr(camera, 'rh_angle'): camera.rh_angle = target_rh
-    if hasattr(camera, 'rv_angle'): camera.rv_angle = target_rv
+    if 'target_rh' in locals():
+        if hasattr(camera, 'rh_angle'): camera.rh_angle = target_rh
+    if 'target_rv' in locals():
+        if hasattr(camera, 'rv_angle'): camera.rv_angle = target_rv
 
     # Tell the official system to recalculate position vectors without locking the mouse
     if hasattr(camera, 'updateCameraPosition'):
@@ -266,24 +279,26 @@ def trigger_cinematic_preset(camera, preset_name):
     camera.updateViewMatrix()
     camera.calculateProjMatrix()
 
-    # ============================================
+    # ===========================================
     # COORDINATE OVERRIDE PIPELINE (RUNS SECOND)
-    # ============================================
-    import math
-    rad_h = math.radians(target_rh)
-    rad_v = math.radians(target_rv)
-    
-    cx = target_dist * math.sin(rad_h) * math.cos(rad_v)
-    cy = target_dist * math.sin(rad_v)
-    cz = target_dist * math.cos(rad_h) * math.cos(rad_v)
-    
-    camera.cameraPos.setX(camera.lookAt.x() + cx)
-    camera.cameraPos.setY(camera.lookAt.y() + cy)
-    camera.cameraPos.setZ(camera.lookAt.z() + cz)
+    # ===========================================
+    # Only execute 3D vector transformations if a positioning button was tapped!
+    if 'target_dist' in locals() and 'target_rh' in locals() and 'target_rv' in locals():
+        import math
+        rad_h = math.radians(target_rh)
+        rad_v = math.radians(target_rv)
+        
+        cx = target_dist * math.sin(rad_h) * math.cos(rad_v)
+        cy = target_dist * math.sin(rad_v)
+        cz = target_dist * math.cos(rad_h) * math.cos(rad_v)
+        
+        camera.cameraPos.setX(camera.lookAt.x() + cx)
+        camera.cameraPos.setY(camera.lookAt.y() + cy)
+        camera.cameraPos.setZ(camera.lookAt.z() + cz)
 
-    # Force immediate openGL buffer recomputations
-    camera.updateViewMatrix()
-    camera.calculateProjMatrix()
+        # Force immediate openGL buffer recomputations
+        camera.updateViewMatrix()
+        camera.calculateProjMatrix()
 
 # =====================================
 # APPLICATION EVENT LOOP INTERCEPTOR 
@@ -297,29 +312,27 @@ class DynamicInputInterceptor(QObject):
         self.rubber_band = None
 
     def eventFilter(self, obj, event):
+        # 1. CORE TYPE FILTER:
+        if not obj or not hasattr(obj, 'metaObject') or not obj.metaObject():
+            # Returning False safely passes non-widgets down to MakeHuman's native drawer loop
+            return False
+
+        # 2. VIEWPORT VERIFICATION GATEWAY
         class_name = obj.metaObject().className() if obj.metaObject() else ""
         is_canvas = "View3D" in class_name or "Canvas" in class_name or "GL" in class_name or hasattr(obj, 'view_matrix')
         if not is_canvas:
             return super().eventFilter(obj, event)
 
+        global _saved_glob_context
         camera = None
-        app = QApplication.instance()
-        
-        if hasattr(obj, 'camera'): 
-            camera = obj.camera
-        elif hasattr(app, 'camera'): 
-            camera = app.camera
-        elif hasattr(app, 'view') and hasattr(app.view, 'camera'): 
-            camera = app.view.camera
-        elif hasattr(app, 'view3d') and hasattr(app.view3d, 'camera'): 
-            camera = app.view3d.camera
+        if _saved_glob_context and hasattr(_saved_glob_context, 'openGLWindow'):
+            view = _saved_glob_context.openGLWindow
+            if view and hasattr(view, 'camera'):
+                camera = view.camera
 
         if not camera:
             return super().eventFilter(obj, event)
 
-        # ----------------------
-        # EVENT MOUSE CAPTURE 
-        # ----------------------
         if event.type() == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier:
                 self.active = True
@@ -348,19 +361,18 @@ class DynamicInputInterceptor(QObject):
 
         return super().eventFilter(obj, event)
 
-# ==================
-# MANAGEMENT HOOKS 
-# ==================
+
 _active_filter_instance = None
 _ui_panel_instance = None
-
-# Persistent global references to prevent PySide garbage collection dropouts
+_dock_container_instance = None  
+_filter_overlay_label = None  
 _saved_app_context = None
 _saved_glob_context = None
 
 def load_extension(app, glob):
-    """Triggered when the user runs this file script via the official MH2 extensions panel."""
-    global _active_filter_instance, _ui_panel_instance, _saved_app_context, _saved_glob_context
+    """Initializes the extension and mounts UI layout inside a dockable widget panel."""
+    global _active_filter_instance, _ui_panel_instance, _dock_container_instance
+    global _filter_overlay_label, _saved_app_context, _saved_glob_context
     
     _saved_app_context = QApplication.instance() or app
     _saved_glob_context = glob
@@ -369,49 +381,116 @@ def load_extension(app, glob):
         _active_filter_instance = DynamicInputInterceptor()
         _saved_app_context.installEventFilter(_active_filter_instance)
         
-        target_panel = None
-        for attr in ['extensions_panel', 'community_panel', 'right_panel', 'side_panel']:
-            if hasattr(glob, attr) and getattr(glob, attr):
-                target_panel = getattr(glob, attr)
-                break
-                
-        if not target_panel and hasattr(glob, 'window') and glob.window:
-            target_panel = glob.window.findChild(QWidget, "extensions_panel") or glob.window.findChild(QWidget, "right_panel")
-
-        # Fallback to the floating tool palette window
-        _ui_panel_instance = CinematicPresetsUI(_active_filter_instance)
+        # 1. Locate the main application window and viewport
+        view = None
+        main_window = None
         
-        if target_panel:
-            if target_panel.layout():
-                target_panel.layout().addWidget(_ui_panel_instance)
-            else:
-                layout = QVBoxLayout(target_panel)
-                layout.addWidget(_ui_panel_instance)
-            glob.env.logLine(1, "+++ [Camera Controls Engine] Docked successfully inside sidebar.")
+        for widget in _saved_app_context.topLevelWidgets():
+            if isinstance(widget, QMainWindow) or str(widget.objectName()).lower() == "mainwindow":
+                main_window = widget
+                break
+
+        if hasattr(glob, 'openGLWindow') and glob.openGLWindow:
+            view = glob.openGLWindow
+        elif main_window:
+            for child in main_window.findChildren(QWidget):
+                if not hasattr(child, 'metaObject') or not child.metaObject():
+                    continue
+                if hasattr(child, 'camera') and hasattr(child, 'light'):
+                    view = child
+                    break
+
+        # 2. Set up lens overlay filter layer 
+        if view and _filter_overlay_label is None:
+            _filter_overlay_label = QLabel(view)
+            _filter_overlay_label.setObjectName("camera_lens_overlay_filter")
+            _filter_overlay_label.setStyleSheet("border: none; background: transparent; padding: 0px; margin: 0px;")
+            _filter_overlay_label.setFrameShape(QLabel.NoFrame)
+            _filter_overlay_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            _filter_overlay_label.setScaledContents(True)
+            _filter_overlay_label.setGeometry(0, 0, view.width(), view.height())
+            _filter_overlay_label.show()
+
+        # 3. Instantiate the UI panel
+        _ui_panel_instance = CinematicPresetsUI(_active_filter_instance)
+
+        # 4. Docking Layer: Wrap the panel and attach it to the Main Window
+        if main_window:
+            _dock_container_instance = QDockWidget("Camera Controls", main_window)
+            _dock_container_instance.setObjectName("camera_controls_dock_widget")
+            
+            # Allows you to drag/dock it to the Left or Right sides of your screen
+            _dock_container_instance.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+            
+            # Place your exact UI panel inside the dock container
+            _dock_container_instance.setWidget(_ui_panel_instance)
+            
+            # Snap it to the Right side panel layout area by default
+            main_window.addDockWidget(Qt.RightDockWidgetArea, _dock_container_instance)
+            _dock_container_instance.show()
         else:
+            # Floating fallback if main window isn't detected
             _ui_panel_instance.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
-            _ui_panel_instance.setWindowTitle("MH2 Studio Camera Presets")
-            _ui_panel_instance.resize(250, 300)
+            _ui_panel_instance.setWindowTitle("Camera Controls")
+            _ui_panel_instance.resize(250, 350)
             _ui_panel_instance.show()
-            glob.env.logLine(1, "+++ [Camera Controls Engine] Sidebar missing. Spawned floating layout utility window.")
         
     return {"status": "camera_controls_active"}
 
-# =====================
-# UI PRESET EXECUTOR 
-# =====================
+# =================================
+# QSS COMPLIANT UI COMPONENT PANEL 
+# =================================
 class CinematicPresetsUI(QWidget):
-    """Injected UI container displaying the studio layout shortcut triggers."""
+    """Injected UI container displaying convenient studio layout shortcut triggers."""
     def __init__(self, target_interceptor, parent=None):
         super().__init__(parent)
         self.interceptor = target_interceptor
+        self.setObjectName("CinematicPresetsUI")
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(6)
+        
         title = QLabel("Cinematic Lenses & Framing")
         title.setStyleSheet("font-weight: bold; font-size: 13px; margin: 10px 0px 5px 0px; color: #E0E0E0;")
         layout.addWidget(title)
         
+        # ----------------------------------------
+        # CINEMATIC POST-PROCESS FILTER DROPDOWN 
+        # ----------------------------------------
+        filter_label = QLabel("Camera Post-Process Filter:")
+        filter_label.setStyleSheet("font-size: 11px; color: #A0A0A0; margin-top: 5px;")
+        layout.addWidget(filter_label)
+        
+        self.filter_dropdown = QComboBox()
+        self.filter_dropdown.setObjectName("camera_filter_dropdown")
+        self.filter_dropdown.setProperty("class", "action-combo-box")
+        
+        # 1. Locate the "filters" folder next to this running script file
+        import os
+        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        filters_dir = os.path.join(plugin_dir, "filters")
+        
+        # 2. Automatically scan the folder for all .png file templates
+        if os.path.exists(filters_dir):
+            dynamic_filters = sorted([f for f in os.listdir(filters_dir) if f.lower().endswith('.png')])
+        else:
+            dynamic_filters = ["default.png"]
+            print(f"![Camera Controls Engine] Path not found for dynamic population: {filters_dir}")
+            
+        # 3. Mount the discovered file list directly into the dropdown layout
+        self.filter_dropdown.addItems(dynamic_filters)
+        
+        # Hook up the filter change execution trigger
+        self.filter_dropdown.currentTextChanged.connect(self.execute_render_filter_change)
+        layout.addWidget(self.filter_dropdown)
+        layout.addSpacing(5)
+
+        # -----------------------------------------
+        # 18 CAMERA FRAMING SHORTCUT GRID
+        # -----------------------------------------
         grid = QGridLayout()
+        grid.setSpacing(4)
         
         buttons_config = [
             ("Selfie Left", "selfie_left", 0, 0),
@@ -433,92 +512,77 @@ class CinematicPresetsUI(QWidget):
             ("OTS Left", "ots_left", 8, 0),
             ("OTS Right", "ots_right", 8, 1)
         ]
-
+        
         for text, key, r, c in buttons_config:
             btn = QPushButton(text)
-            
             btn.setObjectName(f"btn_{key.replace(' ', '_')}")
             btn.setProperty("class", "action-button secondary-button")
-            
             btn.clicked.connect(lambda checked=False, k=key: self.execute_preset(k))
             grid.addWidget(btn, r, c)
             
         layout.addLayout(grid)
         
-        layout.addSpacing(10)
+        layout.addSpacing(6)
         reset_btn = QPushButton("Reset Camera View")
-        
         reset_btn.setObjectName("btn_camera_reset")
         reset_btn.setProperty("class", "action-button primary-button")
-        
         reset_btn.clicked.connect(lambda: self.execute_preset("reset"))
         layout.addWidget(reset_btn)
         
         layout.addStretch()
 
     def execute_preset(self, key):
-        """Finds current active rendering context"""
-        global _saved_app_context, _saved_glob_context
-        
-        app = _saved_app_context or QApplication.instance()
+        """Finds active viewport camera structure via glob to apply framing matrix angles."""
+        global _saved_glob_context
         camera = None
-        
-        # 1. Direct Framework Reference Checks
-        if hasattr(app, 'camera'): camera = app.camera
-        elif hasattr(app, 'view') and hasattr(app.view, 'camera'): camera = app.view.camera
-        elif hasattr(app, 'view3d') and hasattr(app.view3d, 'camera'): camera = app.view3d.camera
-        
-        if not camera and _saved_glob_context:
-            glob = _saved_glob_context
-            if hasattr(glob, 'camera'): camera = glob.camera
-            elif hasattr(glob, 'view') and hasattr(glob.view, 'camera'): camera = glob.view.camera
-            elif hasattr(glob, 'view3d') and hasattr(glob.view3d, 'camera'): camera = glob.view3d.camera
-            
-            # Nested Viewport Configurations
-            elif hasattr(glob, 'scene') and glob.scene:
-                if hasattr(glob.scene, 'camera'): camera = glob.scene.camera
-                elif hasattr(glob.scene, 'view') and hasattr(glob.scene.view, 'camera'): camera = glob.scene.view.camera
-                elif hasattr(glob.scene, 'getView') and glob.scene.getView() and hasattr(glob.scene.getView(), 'camera'):
-                    camera = glob.scene.getView().camera
+        if _saved_glob_context and hasattr(_saved_glob_context, 'openGLWindow'):
+            view = _saved_glob_context.openGLWindow
+            if view and hasattr(view, 'camera'):
+                camera = view.camera
 
-        # 2. REFLECTION LOOP (Failsafe for dynamic MH2 property changes)
-        if not camera and _saved_glob_context:
-            # Check all properties attached to glob for sub-objects with camera definitions
-            for attr_name in dir(_saved_glob_context):
-                try:
-                    attr_val = getattr(_saved_glob_context, attr_name)
-                    if attr_val and hasattr(attr_val, 'camera'):
-                        camera = getattr(attr_val, 'camera')
-                        break
-                    elif attr_val and hasattr(attr_val, 'view') and hasattr(attr_val.view, 'camera'):
-                        camera = attr_val.view.camera
-                        break
-                except Exception:
-                    continue
-
-        # 3. Apply transformation parameters if located (Clean single execution path)
         if camera:
             trigger_cinematic_preset(camera, key)
+            _saved_glob_context.openGLWindow.update()
+
+    def execute_render_filter_change(self, filter_text):
+        """Loads and updates the post-process texture overlay from the filters directory."""
+        global _filter_overlay_label
+        if _filter_overlay_label is None:
+            return
             
-            # Force canvas view updates across all discovered viewports
-            if hasattr(app, 'view'): app.view.update()
-            if hasattr(app, 'view3d'): app.view3d.update()
-            if _saved_glob_context:
-                if hasattr(_saved_glob_context, 'view'): _saved_glob_context.view.update()
-                if hasattr(_saved_glob_context, 'view3d'): _saved_glob_context.view3d.update()
-                if hasattr(_saved_glob_context, 'scene') and hasattr(_saved_glob_context.scene, 'update'):
-                    _saved_glob_context.scene.update()
-                    
-            print(f"-> Matrix transformed to snapshot preset configuration setup: {key}")
+        name = filter_text.strip()
+        
+        # Point this directly to the "filters" folder location
+        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        texture_path = os.path.join(plugin_dir, "filters", name)
+            
+        if os.path.exists(texture_path):
+            from PySide6.QtGui import QPixmap
+            pixmap = QPixmap(texture_path)
+            
+            _filter_overlay_label.setStyleSheet("border: none; background: transparent; padding: 0px; margin: 0px;")
+            _filter_overlay_label.setFrameShape(QLabel.NoFrame)
+            _filter_overlay_label.setScaledContents(True)
+            _filter_overlay_label.setPixmap(pixmap)
+            
+            if _filter_overlay_label.parentWidget():
+                parent = _filter_overlay_label.parentWidget()
+                _filter_overlay_label.setGeometry(parent.rect())
+                _filter_overlay_label.setContentsMargins(0, 0, 0, 0)
+                
+            _filter_overlay_label.raise_()
+            _filter_overlay_label.update()
+            
+            self.filter_dropdown.clearFocus()
+            if _filter_overlay_label.parentWidget():
+                _filter_overlay_label.parentWidget().setFocus()
         else:
-            # Print object types to the console to let us inspect the active namespace mappings
-            app_type = type(app).__name__ if app else "None"
-            glob_type = type(_saved_glob_context).__name__ if _saved_glob_context else "None"
-            print(f"![Error] Camera missing. App Context: {app_type} | Glob Context: {glob_type}")
+            # This print statement will now accurately show if it's hitting the "filters" path
+            print(f"![Camera Controls Engine] Checking file directory path: {texture_path}")
 
 def unload_extension():
-    """Triggered when refreshing extensions."""
-    global _active_filter_instance, _ui_panel_instance, _saved_app_context, _saved_glob_context
+    """Removes input filters, destroys the dock window wrapper, and clears memory context."""
+    global _active_filter_instance, _ui_panel_instance, _dock_container_instance, _saved_app_context, _saved_glob_context
     qt_app = QApplication.instance() or _saved_app_context
     
     if qt_app and _active_filter_instance is not None:
@@ -528,6 +592,12 @@ def unload_extension():
             _active_filter_instance.rubber_band = None
         _active_filter_instance = None
         
+    # Safely delete the dock wrapper container widget
+    if _dock_container_instance is not None:
+        _dock_container_instance.close()
+        _dock_container_instance.deleteLater()
+        _dock_container_instance = None
+
     if _ui_panel_instance is not None:
         _ui_panel_instance.close()
         _ui_panel_instance.deleteLater()
@@ -535,5 +605,4 @@ def unload_extension():
         
     _saved_app_context = None
     _saved_glob_context = None
-    print("--- [Camera Controls Engine] Cleanly unhooked context threads.")
-
+    print("[Camera Controls] Extension successfully unloaded.")
