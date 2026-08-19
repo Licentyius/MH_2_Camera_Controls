@@ -1,6 +1,6 @@
 # MH_2_Camera_Controls   
    
-#Over the shoulder look camera button
+# Over the shoulder look camera button
 <img src="reference/camera_controls.png" alt="Demo Image" width="600"> 
 
  
@@ -17,9 +17,9 @@ To utilize the rest of the camera controls simply click the button according to 
 necessary for your workflow.  
   
   
-#Chromatic Aberration
+# Chromatic Aberration
 <img src="reference/chroma_abbor.png" alt="Demo Image" width="600">
 
-#90s Camcorder overlay with noir filter 
+# 90s Camcorder overlay with noir filter 
 <img src="reference/90s_camcorder.png" alt="Demo Image" width="600">  
   
