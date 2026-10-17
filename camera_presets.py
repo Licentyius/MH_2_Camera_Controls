@@ -5,7 +5,6 @@
 """
 
 # camera_presets.py
-import math
 
 # Centralized camera preset profiles
 PRESETS = {

@@ -1,0 +1,21 @@
+#
+plugin can be added as usual in pyproject.toml
+
+For testing and comparing I kept two versions like that
+
+camcontrol = "mh2_official_tools.camcontrol"
+#camcontrol = "mh2_official_tools.camcontrolold"
+
+Changes:
+after realizing the box-plugin is here as well, one should only add that once (otherwise the input gets problems)
+
+I avoid local variables and use standard method to load/unload. Only difference to applications done before:
+one needs an instance of QApplication to work with the Input for box-zoom and also effects.
+Then it reacts on openGLWindow (ex-value from is_canvas).
+
+Hint:
+CameraFXProcessor is defined but never called (also in original version). I only worked with the methods in the
+plugin in did not try to activate that code. Sound interesting though what it should do.
+
+All effects are untouched.
+

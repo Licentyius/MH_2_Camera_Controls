@@ -9,15 +9,11 @@ import math
 import random
 import numpy as np
 
-import camera_controls
-
 from PySide6.QtCore import Qt, QPoint, QRect, QSize
 from PySide6.QtGui import QPixmap, QPainter, QImage, QColor, QRadialGradient, QLinearGradient, QPen, QPolygon
 
 from PySide6.QtGui import QLinearGradient
-import camera_presets 
-
-_filter_overlay_label = camera_controls._filter_overlay_label
+from . import camera_presets 
 
 def trigger_cinematic_preset(camera, preset_name):
     """Applies camera positioning matrices and transforms projection fields."""
@@ -57,15 +53,6 @@ def trigger_cinematic_preset(camera, preset_name):
         camera.rh_angle = target_rh
     if hasattr(camera, 'rv_angle'): 
         camera.rv_angle = target_rv
-
-    # Execute system update hooks
-    if hasattr(camera, 'updateCameraPosition'): 
-        camera.updateCameraPosition()
-    elif hasattr(camera, 'update'): 
-        camera.update()
-
-    camera.updateViewMatrix()
-    camera.calculateProjMatrix()
 
     # Calculate final translation offsets using target coordinates
     rad_h = math.radians(target_rh)
@@ -189,8 +176,6 @@ class CameraFXProcessor:
         # TYPE 4: BITMAP & MULTI-PASS CHANNELS (example Chromatic Aberration, 1920s Movie)
         # ================================================================================
         elif fx_type == "multi_pass_bitmap":
-            import numpy as np
-            import random
 
             # Sub-type: Channel Splitting (Chromatic Aberration)
             if config.get("pass_mode") == "chromatic_aberration":
@@ -236,8 +221,6 @@ class CameraFXProcessor:
         # TYPE 5: PROCEDURAL MATH PARTICLES (example Raindrops, Grain Noise, Smoke Curls)
         # ===============================================================================
         elif fx_type == "procedural_particles":
-            import random
-            import math
             
             p_mode = config.get("particle_mode")
             
@@ -272,8 +255,6 @@ class CameraFXProcessor:
         # TYPE 5.5: PROCEDURAL SHAPE MATRIX SCATTER (example Hearts Valentine, Custom Vectors)
         # ====================================================================================
         elif fx_type == "procedural_shape_scatter":
-            import random
-            
             shape_mode = config.get("shape_mode")
             
             # Sub-type: Layered Specular Valentine Heart Loop
